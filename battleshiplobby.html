@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Battleship Lobby</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      margin: 0;
+      background-color: #2b2b2b;
+      color: #ffffff;
+    }
+    .container {
+      display: flex;
+      width: 80%;
+      max-width: 800px;
+      gap: 20px;
+    }
+    .main-section {
+      flex: 3;
+      text-align: center;
+    }
+    .lobby-list {
+      flex: 1;
+      background-color: #3b3b3b;
+      padding: 15px;
+      border-radius: 10px;
+      height: 400px;
+      overflow-y: auto;
+    }
+    h1 {
+      font-size: 2em;
+      margin-bottom: 20px;
+    }
+    .username-section {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+    .username-section label {
+      margin-right: 10px;
+    }
+    input[type="text"] {
+      padding: 10px;
+      border-radius: 5px;
+      border: 1px solid #444;
+    }
+    .button-section {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+    button {
+      padding: 10px 20px;
+      background-color: #4CAF50;
+      border: none;
+      border-radius: 5px;
+      color: #fff;
+      font-size: 16px;
+      cursor: pointer;
+      margin-right: 10px;
+    }
+    button:hover {
+      background-color: #45a049;
+    }
+    button.disabled {
+      background-color: #808080; 
+      cursor: not-allowed;
+    }
+    .lobby-list h3 {
+      text-align: center;
+      margin: 0 0 10px 0;
+    }
+    .lobby-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background-color: #2e2e2e;
+      padding: 10px;
+      border-radius: 5px;
+      margin-bottom: 10px;
+    }
+    .lobby-item button {
+      padding: 5px 10px;
+      background-color: #1E90FF;
+      font-size: 14px;
+    }
+    .lobby-item button.disabled {
+      background-color: #808080;
+      cursor: not-allowed;
+    }
+    .lobby-item button:hover {
+      background-color: #1C86EE;
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <!--Main section for title, username input, and create lobby button -->
+  <div class="main-section">
+    <h1>Battleship</h1>
+
+    <!--Username input section -->
+    <div class="username-section">
+      <label for="username">Enter username:</label>
+      <input type="text" id="username" placeholder="Username">
+    </div>
+
+    <!--Lock Username button -->
+    <div class="button-section">
+      <button id="lockUsernameBtn">Lock Username</button>
+    </div>
+
+    <!--Create lobby button section -->
+    <div class="button-section">
+      <button id="createLobbyBtn" class="disabled" disabled>Create Lobby</button>
+    </div>
+  </div>
+
+  <!--Sidebar for lobby list -->
+  <div class="lobby-list">
+    <h3>Lobbies</h3>
+
+    <!--Placeholder lobby item -->
+    <div class="lobby-item">
+      <span>Lobby 1</span>
+      <button class="disabled" disabled>Join</button>
+    </div>
+    <div class="lobby-item">
+      <span>Lobby 2</span>
+      <button class="disabled" disabled>Join</button>
+    </div>
+    
+  </div>
+</div>
+
+<script src="lobby.js"></script>
+</body>
+</html>
