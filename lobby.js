@@ -8,7 +8,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
     let usernameLocked = false;
     let playerOneId; 
-
+    let currentGameSessionId;
    
     function checkUsername() {
         const username = usernameInput.value.trim();
@@ -70,10 +70,36 @@ document.addEventListener('DOMContentLoaded', function () {
     lockUsernameBtn.addEventListener('click', lockUsername);
 
     
-    createLobbyBtn.addEventListener('click', async function () {
-        if (usernameLocked && playerOneId) { 
-            console.log(`Creating lobby for ${usernameInput.value.trim()}`);
-            
+   // createLobbyBtn.addEventListener('click', async function () {
+  //      if (usernameLocked && playerOneId) { 
+  //          console.log(`Creating lobby for ${usernameInput.value.trim()}`);
+   //         
+   //        
+  //          const response = await fetch('/create-session', {
+   //             method: 'POST',
+  //              headers: {
+   //                 'Content-Type': 'application/json',
+   //             },
+  //              body: JSON.stringify({ playerOneId }), 
+   //         });
+
+   //         const result = await response.json();
+   //         console.log(result.msg); 
+   //         if (result.gamesessionId) {
+    //            alert(`Lobby created for ${usernameInput.value.trim()} with Game Session ID: ${result.gamesessionId}!`); // Show game session ID
+    //        } else {
+    //            alert('Failed to create lobby. Please try again.');
+    //        }
+    //    } else {
+   //         alert('Please lock your username first!');
+  //      }
+   // });
+
+   createLobbyBtn.addEventListener('click', async function () {
+    if (usernameLocked && playerOneId) { 
+        console.log(`Creating lobby for ${usernameInput.value.trim()}`);
+        
+        try {
            
             const response = await fetch('/create-session', {
                 method: 'POST',
@@ -84,18 +110,26 @@ document.addEventListener('DOMContentLoaded', function () {
             });
 
             const result = await response.json();
-            console.log(result.msg); 
-            if (result.gamesessionId) {
-                alert(`Lobby created for ${usernameInput.value.trim()} with Game Session ID: ${result.gamesessionId}!`); // Show game session ID
+
+            if (result.success && result.gameSessionId) {
+                currentGameSessionId = result.gameSessionId; 
+                localStorage.setItem('gameSessionId', currentGameSessionId);
+                alert(`Lobby created with Game Session ID: ${result.gameSessionId}!\nDummy Player 2 added for testing.`);
+                console.log(`Game Session ID: ${result.gameSessionId}`);
             } else {
-                alert('Failed to create lobby. Please try again.');
+                alert(`Failed to create lobby: ${result.msg}`);
             }
-        } else {
-            alert('Please lock your username first!');
+        } catch (error) {
+            console.error('Error creating lobby:', error);
+            alert('Error creating lobby. Please try again.');
         }
+    } else {
+        alert('Please lock your username first!');
+    }
+
     });
 
-    
+
     joinButtons.forEach(button => {
         button.addEventListener('click', function () {
             if (usernameLocked) {
