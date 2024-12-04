@@ -1,3 +1,6 @@
+
+
+
 const config = {
     type: Phaser.AUTO,
     width: 1200,
@@ -14,12 +17,15 @@ const config = {
 const game = new Phaser.Game(config);
 
 let playerOneId;
+let playerTwoId;
 let shipsLocked = false;
 const placedShips = [];
 const grid = [];
 let currentShip = null;
 const currentGameSessionId = localStorage.getItem('gameSessionId');
 let playerGrid = []; 
+let currentTurn = null;
+let attackButton = null; 
 
 
 const shipsData = [
@@ -44,31 +50,31 @@ function create() {
     const gridSize = 10;
     const offsetX = 200;
 
-    
+    let attackButton = null; // Declare attackButton at the top
+    let selectedCell = null; 
+    const opponentGrid = []; 
+    const attackedCells = {}; // To track attacked cells
+
+    // Spawn boundary for ships
     const spawnBoundary = this.add.rectangle(offsetX, 540, 400, 150, 0x4CAF50, 0.2).setOrigin(0, 0);
 
-    
+    // Create player's grid
     for (let row = 0; row < gridSize; row++) {
-    for (let col = 0; col < gridSize; col++) {
-        const cellX = offsetX + col * cellSize;
-        const cellY = 60 + row * cellSize;
-        const cell = this.add.rectangle(cellX, cellY, cellSize - 2, cellSize - 2, 0x5c5c5c).setOrigin(0);
-        cell.id = String.fromCharCode(65 + row) + (col + 1); 
-        playerGrid.push(cell); 
-        cell.setInteractive();
-    }
+        for (let col = 0; col < gridSize; col++) {
+            const cellX = offsetX + col * cellSize;
+            const cellY = 60 + row * cellSize;
+            const cell = this.add.rectangle(cellX, cellY, cellSize - 2, cellSize - 2, 0x5c5c5c).setOrigin(0);
+            cell.id = String.fromCharCode(65 + row) + (col + 1); 
+            playerGrid.push(cell); 
+            cell.setInteractive();
+        }
     }
 
     this.add.text(offsetX, 20, "Your Board", { fontSize: '20px', color: '#ffffff' });
     createGrid(this, offsetX, 60, gridSize, cellSize, false); 
 
-    
+    // Create opponent's grid
     this.add.text(offsetX + 500, 20, "Opponent's Board", { fontSize: '20px', color: '#ffffff' });
-
-    let selectedCell = null; 
-    const opponentGrid = []; 
-
-    
     for (let col = 0; col < gridSize; col++) {
         const colX = offsetX + 500 + col * opponentCellSize + opponentCellSize / 2; 
         this.add.text(colX, 60 - opponentCellSize / 2, (col + 1).toString(), {
@@ -77,7 +83,6 @@ function create() {
             align: 'center',
         }).setOrigin(0.5);
     }
-
     for (let row = 0; row < gridSize; row++) {
         const rowY = 60 + row * opponentCellSize + opponentCellSize / 2; 
         this.add.text(offsetX + 500 - opponentCellSize / 2, rowY, String.fromCharCode(65 + row), {
@@ -86,8 +91,6 @@ function create() {
             align: 'center',
         }).setOrigin(0.5);
     }
-
-    
     for (let row = 0; row < gridSize; row++) {
         for (let col = 0; col < gridSize; col++) {
             const cellX = offsetX + 500 + col * opponentCellSize;
@@ -95,8 +98,6 @@ function create() {
             const cell = this.add.rectangle(cellX, cellY, opponentCellSize - 2, opponentCellSize - 2, 0x5c5c5c).setOrigin(0);
             cell.id = String.fromCharCode(65 + row) + (col + 1); 
             opponentGrid.push(cell);
-
-            
             cell.setInteractive();
             cell.on('pointerdown', () => {
                 if (!shipsLocked) return; 
@@ -105,25 +106,22 @@ function create() {
         }
     }
 
-    
+    // Place and move ships
     let xOffset = 30;
     const yOffset = 610;
 
-    shipsData.forEach((shipData, index) => {
+    shipsData.forEach((shipData) => {
         const ship = this.add.image(offsetX + xOffset, yOffset, shipData.imageKey).setInteractive();
         this.input.setDraggable(ship);
 
-        
+        ship.setDepth(2);
         ship.size = shipData.size;
         ship.setScale(shipData.scale);
         ship.anchorOffsetX = shipData.verticalAnchorOffsetX;
         ship.anchorOffsetY = shipData.verticalAnchorOffsetY;
         ship.orientation = 'vertical';
-
-        
         ship.spawnX = offsetX + xOffset;
         ship.spawnY = yOffset;
-
         xOffset += 70;
 
         this.input.on('drag', (pointer, gameObject, dragX, dragY) => {
@@ -142,6 +140,7 @@ function create() {
         });
     });
 
+    // Lock Ships Button
     const lockButton = this.add.text(offsetX + 310, 427, 'Lock Ships', {
         fontSize: '16px',
         color: '#ffffff',
@@ -149,46 +148,39 @@ function create() {
         padding: 8
     }).setInteractive();
 
-    const statusBox = this.add.text(offsetX + 750, 150, "Hit or Miss", {
-        fontSize: '18px',
-        color: '#ffffff'
-    });
-
-    const controlButtons = addControlButtons(this, statusBox, offsetX + 750, 250);
+    
 
     lockButton.on('pointerdown', async () => {
+        const localPlayerId = localStorage.getItem('playerId');
         if (!shipsLocked) {
-            const allShipsHavePosition = await Promise.all(
-                shipsData.map(async (shipData) => {
-                    const response = await fetch('/check-ship-position', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({ playerId: playerOneId, shipId: shipData.shipId }),
-                    });
-                    const result = await response.json();
-                    return result.positionFound; 
-                })
-            );
+            try {
+                const allShipsHavePosition = await Promise.all(
+                    shipsData.map(async (shipData) => {
+                        const response = await fetch('/check-ship-position', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ playerId: localPlayerId, shipId: shipData.shipId }),
+                        });
+                        const result = await response.json();
+                        return result.positionFound; 
+                    })
+                );
 
-            if (allShipsHavePosition.every(hasPosition => hasPosition)) {
-                shipsLocked = true;
-                lockButton.setAlpha(0.5);
-                lockButton.setInteractive(false);
-
-                
-                const { attackButton } = controlButtons;
-                attackButton.setAlpha(1); 
-                attackButton.setColor('#ffffff'); 
-
-                alert("Ships locked! You can now attack.");
-            } else {
-                alert("Place all ships on the grid to lock them.");
+                if (allShipsHavePosition.every(Boolean)) {
+                    shipsLocked = true;
+                    lockButton.setAlpha(0.5);
+                    lockButton.setInteractive(false);
+                    alert("Ships locked! You can now attack.");
+                } else {
+                    alert("Place all ships on the grid to lock them.");
+                }
+            } catch (error) {
+                console.error('Error checking ship positions:', error);
             }
         }
     });
 
+    // Toggle Orientation Button
     const toggleOrientationButton = this.add.text(offsetX + 310, 470, 'Toggle Orientation', {
         fontSize: '16px',
         color: '#ffffff',
@@ -216,71 +208,78 @@ function create() {
         }
     });
 
-    
-    const attackedCells = {};
-const { attackButton } = controlButtons;
-    attackButton.on('pointerdown', async () => {
-    if (selectedCell && shipsLocked) {
-        const cellId = selectedCell.id; 
+    // Control Buttons
+    const statusBox = this.add.text(offsetX + 750, 150, "Hit or Miss", {
+        fontSize: '18px',
+        color: '#ffffff'
+    });
+    const controlButtons = addControlButtons(this, statusBox, offsetX + 750, 250);
+    attackButton = controlButtons.attackButton;
 
-        
-        if (attackedCells[cellId]) {
-            alert('You have already attacked this cell!');
+    attackButton.on('pointerdown', () => {
+        const localPlayerId = localStorage.getItem('playerId'); // Get the local player ID
+        console.log("Local Player ID:", localPlayerId); // Debugging
+    
+        console.log("Current Turn ID:", currentTurn); // Debugging
+        if (currentTurn !== localPlayerId) {
+            alert("It's not your turn!");
             return;
         }
-
-        
-        try {
-            const response = await fetch('/attack', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ gameSessionId: currentGameSessionId, playerId: playerOneId, targetCell: cellId }),
-            });
-
-            const result = await response.json();
-
-            if (result.success) {
-                
-                attackedCells[cellId] = result.result.toLowerCase();
-
-                
-                statusBox.setText(`Attack on ${cellId}: ${result.result}`);
-
-                if (attackedCells[cellId] === 'hit') {
-                    selectedCell.setFillStyle(0xff0000); 
-                } else if (attackedCells[cellId] === 'miss') {
-                    selectedCell.setFillStyle(0xffffff); 
-                }
-
-                
-                selectedCell.isAttacked = true;
-
-                
-                selectedCell.removeAllListeners('pointerdown');
-                selectedCell.setInteractive(false);
-
-                
-                playerTwoRandomAttack();
-            } else {
-                statusBox.setText(`Attack failed: ${result.msg}`);
+    
+        if (selectedCell && shipsLocked) {
+            const cellId = selectedCell.id;
+    
+            if (attackedCells[cellId]) {
+                alert('You have already attacked this cell!');
+                return;
             }
-        } catch (error) {
-            console.error('Error sending attack:', error);
-            alert('Error during attack. Please try again.');
+    
+            socket.emit('playerAttack', {
+                gameSessionId: currentGameSessionId,
+                playerId: localPlayerId,
+                targetCell: cellId,
+            });
+    
+            console.log(`Attack sent: Cell ${cellId}`);
+        } else {
+            alert('Select a cell to attack first!');
         }
-    } else {
-        alert('Select a cell to attack first!');
-    }
+    });
+    
+
+    // Socket Event Listeners
+    socket.on('currentTurn', ({ currentTurn: newTurn }) => {
+        const localPlayerId = localStorage.getItem('playerId');
+        currentTurn = newTurn; // Update the current turn
+    
+        console.log("Updated Current Turn:", currentTurn); // Debugging
+    
+        if (currentTurn === localPlayerId) {
+            alert("It's your turn! Make your move.");
+            enableAttack();
+        } else {
+            alert("Waiting for opponent's move...");
+            disableAttack();
+        }
+    });
+    
+
+    socket.on('currentTurn', ({ currentTurn }) => {
+        const localPlayerId = localStorage.getItem('playerId');
+        if (currentTurn === localPlayerId) {
+            alert("It's your turn! Make your move.");
+            enableAttack();
+        } else {
+            alert("Waiting for opponent's move...");
+            disableAttack();
+        }
     });
 
-
-
-    
-    
-    
+    socket.on('notYourTurn', ({ msg }) => {
+        alert(msg);
+    });
 }
+
 
 
 
@@ -420,19 +419,24 @@ async function snapToHighlight(ship, cellSize) {
 
         const occupiedCells = calculateOccupiedCells(anchor, orientation, ship.size, offsets);
 
-        const isValid = await checkOverlap(playerOneId, occupiedCells);
+        // Use localPlayerId from localStorage to identify the current player
+        const localPlayerId = localStorage.getItem('playerId');
+        console.log("Player ID being checked for overlap:", localPlayerId);
+
+        const isValid = await checkOverlap(localPlayerId, occupiedCells);
 
         if (!isValid) {
             alert("Overlap detected! Ship will be reset to spawn location.");
             ship.setPosition(ship.spawnX, ship.spawnY); 
         } else {
-            await updateShipPositionInDatabase(playerOneId, shipId, anchor, orientation);
+            await updateShipPositionInDatabase(localPlayerId, shipId, anchor, orientation);
         }
     } else {
         alert("Ship placement is outside the grid!");
         ship.setPosition(ship.spawnX, ship.spawnY); 
     }
 }
+
 
 
 
@@ -491,6 +495,13 @@ function calculateOccupiedCells(anchor, orientation, size, offsets) {
 
 
 async function checkOverlap(playerId, occupiedCells) {
+    console.log("Checking overlap for playerId:", playerId, "occupiedCells:", occupiedCells);
+
+    if (!playerId || !occupiedCells || occupiedCells.length === 0) {
+        console.error("Invalid data for overlap check:", { playerId, occupiedCells });
+        return false;
+    }
+    
     try {
         const response = await fetch('/check-ship-overlap', {
             method: 'POST',
@@ -499,6 +510,7 @@ async function checkOverlap(playerId, occupiedCells) {
         });
 
         const data = await response.json();
+        console.log("Response from /check-ship-overlap:", data);
         if (!data.success) {
             console.error("Overlap detected:", data.overlaps);
             return false;
@@ -596,51 +608,81 @@ async function updateShipPositionInDatabase(playerId, shipId, gridId, orientatio
 
 
 document.addEventListener('DOMContentLoaded', async function () {
-    try {
-        const response = await fetch('https://battleship-demo-e5ad5cbce653.herokuapp.com/get-test-player-id');
-        if (response.ok) {
-            const data = await response.json();
-            if (data.playerOneId) {
-                playerOneId = data.playerOneId;
-                console.log(`playerOneId retrieved: ${playerOneId}`);
-            } else {
-                console.error('No playerOneId found in response');
-            }
-        } else {
-            console.error(`Failed to fetch playerOneId, status: ${response.status}`);
-        }
-    } catch (error) {
-        console.error('Error fetching playerOneId:', error);
+    const gameSessionId = localStorage.getItem('gameSessionId');
+    const localPlayerId = localStorage.getItem('playerId');
+
+    console.log("Local playerId:", localPlayerId);
+    console.log("Game sessionId:", gameSessionId);
+    
+    if (!gameSessionId) {
+        alert('Game session ID not found. Please return to the lobby.');
+        window.location.href = '/battleshiplobby.html';
+        return;
+    }
+
+    // Fetch session details
+    const sessionDetails = await fetchSessionDetails(gameSessionId);
+    if (!sessionDetails) {
+        alert('Failed to fetch session details. Please return to the lobby.');
+        window.location.href = '/battleshiplobby.html';
+        return;
+    }
+
+    // Set playerOneId or playerTwoId based on the current user
+    console.log('Local playerId:', localPlayerId);
+    console.log('Session playerOneId:', sessionDetails.playerOneId);
+    console.log('Session playerTwoId:', sessionDetails.playerTwoId);
+
+    if (localPlayerId == sessionDetails.playerOneId) {
+        playerOneId = sessionDetails.playerOneId;
+        console.log('Initialized board with playerOneId:', playerOneId);
+    } else if (localPlayerId == sessionDetails.playerTwoId) {
+        playerTwoId = sessionDetails.playerTwoId; // Assign to playerTwoId
+        console.log('Initialized board with playerTwoId:', playerTwoId);
+    } else {
+        alert('Failed to identify player role. Please return to the lobby.');
+        window.location.href = '/battleshiplobby.html';
     }
 });
 
 
 
 
+//http://localhost:5000/get-test-player-id
+//https://battleship-demo-e5ad5cbce653.herokuapp.com/get-test-player-id
+
 async function fetchPlayerOneId() {
+    if (playerOneId) {
+        // Prevent fetching if playerOneId is already set
+        console.log('playerOneId already set:', playerOneId);
+        return playerOneId;
+    }
+
     try {
         const response = await fetch('https://battleship-demo-e5ad5cbce653.herokuapp.com/get-test-player-id');
-        
         if (!response.ok) {
             console.error('Network response was not ok');
-            return;
+            return null;
         }
-        
+
         const data = await response.json();
-        console.log("Fetched data:", data); 
-        const playerOneId = data.playerOneId;
+        console.log("Fetched data:", data);
+        const fetchedPlayerOneId = data.playerOneId;
 
-        if (playerOneId === undefined) {
+        if (fetchedPlayerOneId === undefined) {
             console.error("Error: playerOneId is undefined in fetched data");
-            return;
+            return null;
         }
 
-        console.log("playerOneId retrieved:", playerOneId);
-        return playerOneId;
+        console.log("playerOneId retrieved:", fetchedPlayerOneId);
+        return fetchedPlayerOneId;
     } catch (error) {
         console.error('Error fetching playerOneId:', error);
+        return null;
     }
 }
+
+
 
 const createGameSession = async (playerId) => {
     try {
@@ -655,14 +697,22 @@ const createGameSession = async (playerId) => {
         const result = await response.json();
         if (response.ok) {
             console.log("Game session created:", result.gameSessionId);
-            currentGameSessionId = result.gameSessionId; 
+
+            // Store the game session ID in localStorage
+            localStorage.setItem('gameSessionId', result.gameSessionId);
+
+            // Redirect to the Battleship board screen
+            window.location.href = '/battleshipboard.html';
         } else {
             console.error("Error creating session:", result.msg);
+            alert(`Failed to create game session: ${result.msg}`);
         }
     } catch (error) {
         console.error("Error creating session:", error);
+        alert("An error occurred while creating the game session. Please try again.");
     }
 };
+
 
 const joinGameSession = async (gameSessionId, playerId) => {
     try {
@@ -696,11 +746,23 @@ for (let row = 65; row <= 74; row++) {
 }
 
 const attackedCells = {}; 
-
+/*
 async function playerTwoRandomAttack() {
     console.log("Player 2 is attacking...");
     try {
-        
+        const responsePlayerTwo = await fetch(`/get-player-two-id`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ gameSessionId: currentGameSessionId }),
+        });
+
+        const playerTwoData = await responsePlayerTwo.json();
+        if (!playerTwoData.success) {
+            console.error('Failed to fetch Player 2 ID:', playerTwoData.msg);
+            return;
+        }
+        const playerTwoId = playerTwoData.playerId;
+
         const remainingPositions = allGridPositions.filter(cell => !attackedCells[cell]);
         if (remainingPositions.length === 0) {
             console.log("Player 2 has no moves left.");
@@ -710,29 +772,37 @@ async function playerTwoRandomAttack() {
         const targetCell = remainingPositions[Math.floor(Math.random() * remainingPositions.length)];
         console.log(`Player 2 chose: ${targetCell}`);
 
-        
-        attackedCells[targetCell] = true; 
+        try {
+            const response = await fetch('/attack', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    gameSessionId: currentGameSessionId,
+                    playerId: playerTwoId,
+                    targetCell: targetCell,
+                }),
+            });
 
-        const response = await fetch('/attack', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ gameSessionId: currentGameSessionId, playerId: 2, targetCell }),
-        });
+            const result = await response.json();
 
-        const result = await response.json();
-
-        if (result.success) {
-            console.log(`Player 2 attacked ${targetCell}: ${result.result}`);
-            updatePlayerGrid(targetCell, result.result); 
-        } else {
-            console.log(`Player 2 failed to attack: ${result.msg}`);
+            if (result.success) {
+                console.log(`Player 2 attacked ${targetCell}: ${result.result}`);
+                attackedCells[targetCell] = result.result.toLowerCase(); // Track the result
+                
+                // Update the player's grid with the result
+                updatePlayerGrid(targetCell, result.result.toLowerCase());
+            } else {
+                console.log(`Player 2 attack failed: ${result.msg}`);
+            }
+        } catch (error) {
+            console.error("Error during Player 2 attack:", error);
         }
     } catch (error) {
-        console.error("Error during Player 2 attack:", error);
+        console.error("Error during Player 2 attack setup:", error);
     }
 }
+*/
+
 
 
 
@@ -751,38 +821,39 @@ const generateAllGridPoints = (gridSize = 10) => {
 const allGridPoints = generateAllGridPoints();
 
 
-let currentTurn = 'player1'; 
-
-async function handleAttack(cellId) {
-    if (currentTurn === 'player1') {
-        
-        await handlePlayerAttack(cellId);
-        currentTurn = 'player2'; 
-
-        
-        setTimeout(() => {
-            handlePlayerTwoAttack();
-            currentTurn = 'player1'; 
-        }, 2000); 
-    }
-}
 
 function updatePlayerGrid(targetCell, result) {
-    console.log(`Updating grid for targetCell: ${targetCell}, result: ${result}`);
+    console.log(`Player 2 is attacking cell: ${targetCell} on your grid with result: ${result}`);
     
+    // Find the target cell in the player's grid
     const cell = playerGrid.find(c => c.id === targetCell);
+    console.log("Player Grid IDs:", playerGrid.map(cell => cell.id));
 
     if (cell) {
-        console.log(`Found cell: ${cell.id}`);
-        
+        console.log(`Found cell on your grid: ${cell.id}`);
+
+        // Update the cell's color based on attack result
         if (result === 'hit') {
-            cell.setFillStyle(0xff0000); 
+            console.log(`Marking cell ${cell.id} as hit`);
+            cell.setFillStyle(0xff0000); // Red for hit
+            cell.setDepth(1); // Ensure the cell is on top
+            cell.visible = false; // Force re-render
+            cell.visible = true; 
+            console.log("Cell fill color after update:", cell.fillColor); // Should match the applied color
+
         } else if (result === 'miss') {
-            cell.setFillStyle(0xffffff); 
+            console.log(`Marking cell ${cell.id} as miss`);
+            cell.setFillStyle(0xffffff); // White for miss
+            cell.setDepth(1); // Ensure the cell is on top
+            cell.visible = false; // Force re-render
+            cell.visible = true; 
+            console.log("Cell fill color after update:", cell.fillColor); // Should match the applied color
         }
-        cell.setInteractive(false); 
+
+        // Prevent further interaction with this cell
+        cell.setInteractive(false);
     } else {
-        console.error(`Cell ${targetCell} not found on the player's grid.`);
+        console.error(`Cell ${targetCell} not found in player's grid.`);
     }
 }
 
@@ -790,6 +861,121 @@ function updatePlayerGrid(targetCell, result) {
 
 
 
+
+async function fetchSessionDetails(gameSessionId) {
+    try {
+        const response = await fetch('/get-session-players', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ gameSessionId }),
+        });
+
+        const data = await response.json();
+
+        console.log("Session details fetched:", data); // Add this log
+
+        if (response.ok && data.success) {
+            return data;
+        } else {
+            console.error('Failed to fetch session details:', data.msg);
+            return null;
+        }
+    } catch (error) {
+        console.error('Error fetching session details:', error);
+        return null;
+    }
+}
+
+
+document.addEventListener('DOMContentLoaded', function () {
+    const gameSessionId = localStorage.getItem('gameSessionId');
+    const playerId = localStorage.getItem('playerId'); // Store or retrieve player ID
+
+    if (!gameSessionId) {
+        alert('No game session found. Redirecting to lobby.');
+        window.location.href = '/battleshiplobby.html';
+    }
+
+    // Emit an event to join the game session room
+    socket.emit('joinLobby', { gameSessionId, playerId });
+
+    // Handle 'lobbyFull' event
+    socket.on('lobbyFull', (data) => {
+        console.log('Lobby is full:', data);
+
+        // Check player roles
+        if (data.playerOneId === playerId) {
+            console.log('You are Player One.');
+        } else if (data.playerTwoId === playerId) {
+            console.log('You are Player Two.');
+        } else {
+            console.error('Unexpected player role.');
+        }
+
+        // Redirect to game board
+        if (data.redirectTo) {
+            window.location.href = data.redirectTo;
+        } else {
+            console.error('Redirect URL missing in lobbyFull event.');
+        }
+    });
+});
+
+
+
+const socket = io('http://localhost:5000');
+//const socket = io('https://battleship-demo-e5ad5cbce653.herokuapp.com/'); // Use your deployed URL
+
+document.addEventListener('DOMContentLoaded', function () {
+    const gameSessionId = localStorage.getItem('gameSessionId');
+    const playerId = localStorage.getItem('playerId'); // Store or retrieve player ID
+
+    if (!gameSessionId) {
+        alert('No game session found. Redirecting to lobby.');
+        window.location.href = '/battleshiplobby.html';
+    }
+
+    // Emit an event to join the game session room
+    socket.emit('joinLobby', { gameSessionId, playerId });
+
+    // Handle attack logic
+    const attackCell = (targetCell) => {
+        socket.emit('attack', { gameSessionId, targetCell });
+    };
+
+    // Listen for attack results
+    socket.on('attackResult', (data) => {
+        const { targetCell, result } = data;
+        console.log(`Attack on ${targetCell}: ${result}`);
+
+        // Update the grid based on attack results
+        updatePlayerGrid(targetCell, result); // Assume this function exists in your game.js
+    });
+
+    // Example function to handle attack button click
+    document.getElementById('attackBtn').addEventListener('click', function () {
+        const targetCell = prompt('Enter cell to attack (e.g., A5):');
+        attackCell(targetCell);
+    });
+});
+
+
+
+socket.on('notYourTurn', ({ msg }) => {
+    alert(msg); // Notify the player it's not their turn
+});
+
+function enableAttack() {
+    // Enable attack button or interaction logic
+    attackButton.setInteractive(true);
+    attackButton.setAlpha(1); // Optional: visually enable
+}
+
+function disableAttack() {
+    // Disable attack button or interaction logic
+    attackButton.setInteractive(false);
+    attackButton.setAlpha(0.5); // Optional: visually disable
+}
 
 
 function update() {

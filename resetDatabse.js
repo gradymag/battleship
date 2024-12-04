@@ -76,7 +76,7 @@ const resetDatabase = async () => {
         console.log('Tables recreated successfully.');
 
        
-        console.log('Inserting dummy data...');
+        console.log('Inserting ship data...');
         await connection.promise().query(`
             INSERT INTO Ships (name, size) VALUES
             ('Carrier', 4),
@@ -86,16 +86,6 @@ const resetDatabase = async () => {
             ('Patrol', 2);
         `);
 
-        await connection.promise().query(`
-            INSERT INTO PlayerShips (player_id, ship_id, position, orientation) VALUES
-            (2, 1, 'B2', 'horizontal'), 
-            (2, 2, 'E4', 'vertical'),
-            (2, 3, 'C7', 'horizontal'),
-            (2, 4, 'H1', 'vertical'),
-            (2, 5, 'I8', 'horizontal'); 
-        `);
-
-        console.log('Database reset and dummy data inserted successfully!');
     } catch (error) {
         console.error('Error resetting database:', error);
     } finally {

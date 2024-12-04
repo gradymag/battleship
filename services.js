@@ -7,13 +7,22 @@ const connection = mysql.createConnection({
     database: 'eabh9evmkhtwf4bq',
     port: 3306
 });
-
+/*
+const connection = mysql.createConnection({
+    host: 'localhost',
+    user: 'root',
+    password: 'root',
+    database: 'battleship'
+});
+*/
 connection.connect(function(err) {
     if (err) throw err;
     console.log('Connected to MySQL!');
 });
 
-const services = function(app) {
+
+
+const services = function(app,io) {
     app.post('/write-record', async function(req, res) {
         const username = req.body.username; 
 
@@ -30,6 +39,11 @@ const services = function(app) {
             }
         });
     });
+
+
+
+
+
 
     //app.post('/create-session', async function(req, res) {
    //     const playerOneId = req.body.playerOneId; 
@@ -65,19 +79,32 @@ const services = function(app) {
         });
     });
 
-    app.get('/get-test-player-id', async function(req, res) {
-        connection.query("SELECT player_id FROM Players LIMIT 1", function(err, results) {
-            if (err) {
-                console.error("Database error:", err);
-                return res.status(500).json({ msg: "ERROR: " + err });
-            } 
-            if (results.length === 0) {
-                return res.status(404).json({ msg: "No players found" });
-            } else {
-                return res.status(200).json({ playerOneId: results[0].player_id });
+    app.get('/get-test-player-id', async function (req, res) {
+        const gameSessionId = req.query.gameSessionId;
+    
+        if (!gameSessionId) {
+            return res.status(400).json({ msg: "Missing gameSessionId" });
+        }
+    
+        connection.query(
+            `SELECT player_one_id FROM GameSessions WHERE game_session_id = ?`,
+            [gameSessionId],
+            function (err, results) {
+                if (err) {
+                    console.error("Database error:", err);
+                    return res.status(500).json({ msg: "ERROR: " + err });
+                }
+    
+                if (results.length === 0) {
+                    return res.status(404).json({ msg: "Game session not found" });
+                }
+    
+                return res.status(200).json({ playerOneId: results[0].player_one_id });
             }
-        });
+        );
     });
+    
+    
 
     app.post('/update-ship-position', (req, res) => {
         const { playerId, shipId, position, orientation } = req.body;
@@ -123,7 +150,7 @@ const services = function(app) {
     app.post('/check-ship-overlap', (req, res) => {
         try {
             const { playerId, occupiedCells } = req.body;
-    
+            console.log("Received data for overlap check:", { playerId, occupiedCells });
             console.log("Received playerId:", playerId);
             console.log("Received occupiedCells:", occupiedCells);
     
@@ -224,11 +251,14 @@ const services = function(app) {
         const { gameSessionId, playerId, targetCell } = req.body;
     
         if (!gameSessionId || !playerId || !targetCell) {
+            console.error("Missing parameters:", { gameSessionId, playerId, targetCell });
             return res.status(400).json({ msg: "Missing parameters" });
         }
     
         try {
-            
+            console.log("Attack request received:", { gameSessionId, playerId, targetCell });
+    
+            // Fetch players
             const query = `
                 SELECT player_one_id, player_two_id
                 FROM GameSessions
@@ -237,12 +267,14 @@ const services = function(app) {
             const [results] = await connection.promise().query(query, [gameSessionId]);
     
             if (!results.length) {
+                console.error("Invalid game session:", gameSessionId);
                 return res.status(400).json({ msg: "Invalid game session" });
             }
     
             const { player_one_id, player_two_id } = results[0];
+            console.log("Game session players:", { player_one_id, player_two_id });
     
-            
+            // Determine turn
             const attackCountQuery = `
                 SELECT COUNT(*) AS totalAttacks
                 FROM Attacks
@@ -251,15 +283,17 @@ const services = function(app) {
             const [attackCountResults] = await connection.promise().query(attackCountQuery, [gameSessionId]);
             const totalAttacks = attackCountResults[0].totalAttacks;
     
-            
-            const isPlayerOneTurn = totalAttacks % 2 === 0; 
+            const isPlayerOneTurn = totalAttacks % 2 === 0; // True if even, false if odd
             const expectedPlayerId = isPlayerOneTurn ? player_one_id : player_two_id;
     
+            console.log("Turn details:", { totalAttacks, isPlayerOneTurn, expectedPlayerId });
+    
             if (playerId !== expectedPlayerId) {
+                console.error("Invalid turn. Expected:", expectedPlayerId, "but got:", playerId);
                 return res.status(400).json({ msg: "Not your turn" });
             }
     
-            
+            // Calculate hits/misses
             const attackQuery = `
                 SELECT ps.player_id, ps.ship_id, s.size, ps.position, ps.orientation
                 FROM PlayerShips ps
@@ -268,23 +302,25 @@ const services = function(app) {
             `;
             const [ships] = await connection.promise().query(attackQuery, [playerId, player_one_id, player_two_id]);
     
-            
             const opponentOccupiedCells = ships.reduce((allCells, { position, orientation, size }) => {
                 const offsets = shipOffsets[size];
                 const shipCells = calculateOccupiedCells(position, orientation, size, offsets);
                 return allCells.concat(shipCells);
             }, []);
     
+            console.log("Opponent occupied cells:", opponentOccupiedCells);
+    
             const isHit = opponentOccupiedCells.includes(targetCell);
     
-            
+            // Log attack in database
             const logAttackQuery = `
                 INSERT INTO Attacks (game_session_id, target_position, result)
                 VALUES (?, ?, ?)
             `;
             await connection.promise().query(logAttackQuery, [gameSessionId, targetCell, isHit ? 'hit' : 'miss']);
     
-            
+            console.log("Attack logged successfully:", { targetCell, result: isHit ? 'hit' : 'miss' });
+    
             return res.json({
                 success: true,
                 result: isHit ? 'Hit' : 'Miss',
@@ -297,6 +333,9 @@ const services = function(app) {
     });
     
     
+    
+    
+    
     app.post('/create-session', async function (req, res) {
         const playerOneId = req.body.playerOneId;
     
@@ -305,38 +344,96 @@ const services = function(app) {
         }
     
         try {
-            
-            const dummyUsername = 'Player2'; 
-            const insertPlayerQuery = `
-                INSERT INTO Players (username)
-                VALUES (?)
-            `;
-    
+            /*
+            // Create dummy player
+            const dummyUsername = `Dummy_${Date.now()}`;
+            const insertPlayerQuery = `INSERT INTO Players (username) VALUES (?)`;
             const [insertResult] = await connection.promise().query(insertPlayerQuery, [dummyUsername]);
-            const playerTwoId = insertResult.insertId; 
+            const playerTwoId = insertResult.insertId;
     
             console.log(`Dummy Player2 added with ID: ${playerTwoId}`);
     
-            
+            // Step 1: Add random ship placement
+            const shipSizes = [5, 4, 3, 3, 2]; // Ship sizes for Carrier, Battleship, Cruiser, Submarine, Patrol
+            const gridSize = 10;
+    
+            const generateRandomShipPlacement = () => {
+                const placements = [];
+                const occupiedCells = new Set();
+    
+                shipSizes.forEach((size, index) => {
+                    let placed = false;
+    
+                    while (!placed) {
+                        const orientation = Math.random() < 0.5 ? 'horizontal' : 'vertical';
+                        const startRow = Math.floor(Math.random() * gridSize);
+                        const startCol = Math.floor(Math.random() * gridSize);
+    
+                        const shipCells = [];
+                        let valid = true;
+    
+                        for (let i = 0; i < size; i++) {
+                            const row = orientation === 'horizontal' ? startRow : startRow + i;
+                            const col = orientation === 'horizontal' ? startCol + i : startCol;
+    
+                            if (row >= gridSize || col >= gridSize || occupiedCells.has(`${row},${col}`)) {
+                                valid = false;
+                                break;
+                            }
+    
+                            shipCells.push(`${String.fromCharCode(65 + row)}${col + 1}`);
+                        }
+    
+                        if (valid) {
+                            shipCells.forEach(cell => occupiedCells.add(cell));
+                            placements.push({
+                                shipId: index + 1, // Ensure ship IDs are unique
+                                position: shipCells[0], // Anchor position
+                                orientation,
+                            });
+                            placed = true;
+                        }
+                    }
+                });
+    
+                return placements;
+            };
+    
+            // Insert dummy player ships
+            const dummyShipPlacements = generateRandomShipPlacement();
+    
+            for (const { shipId, position, orientation } of dummyShipPlacements) {
+                await connection.promise().query(
+                    `INSERT INTO PlayerShips (player_id, ship_id, position, orientation) VALUES (?, ?, ?, ?)`,
+                    [playerTwoId, shipId, position, orientation]
+                );
+            }
+    
+            console.log(`Dummy Player2 ships placed successfully.`);
+            */
+    
+            // Create game session without a dummy player
             const createSessionQuery = `
-                INSERT INTO GameSessions (player_one_id, player_two_id, session_status)
-                VALUES (?, ?, 'waiting')
+                INSERT INTO GameSessions (player_one_id, session_status)
+                VALUES (?, 'waiting')
             `;
+            const [sessionResult] = await connection.promise().query(createSessionQuery, [playerOneId]);
+            const gameSessionId = sessionResult.insertId;
     
-            const [sessionResult] = await connection.promise().query(createSessionQuery, [playerOneId, playerTwoId]);
-    
-            console.log(`Game session created with ID: ${sessionResult.insertId}`);
+            console.log(`Game session created with ID: ${gameSessionId}`);
     
             return res.status(200).json({
                 success: true,
                 msg: "Game session created successfully!",
-                gameSessionId: sessionResult.insertId,
+                gameSessionId,
             });
         } catch (error) {
             console.error("Error creating session:", error);
             return res.status(500).json({ success: false, msg: "Error creating session" });
         }
     });
+    
+    
     
     
     
@@ -374,28 +471,83 @@ const services = function(app) {
         const { gameSessionId, playerTwoId } = req.body;
     
         if (!gameSessionId || !playerTwoId) {
-            return res.status(400).json({ msg: "Missing gameSessionId or playerTwoId" });
+            console.error('Missing gameSessionId or playerTwoId:', { gameSessionId, playerTwoId });
+            return res.status(400).json({ msg: 'Missing gameSessionId or playerTwoId' });
         }
     
-        const query = `
+        const updateQuery = `
             UPDATE GameSessions
             SET player_two_id = ?
             WHERE game_session_id = ? AND session_status = 'waiting'
         `;
     
-        connection.query(query, [playerTwoId, gameSessionId], (err, results) => {
+        connection.query(updateQuery, [playerTwoId, gameSessionId], (err, results) => {
             if (err) {
-                console.error("Error joining game session:", err);
-                return res.status(500).json({ msg: "Error joining game session" });
+                console.error('Error updating player_two_id:', err);
+                return res.status(500).json({ msg: 'Database update failed' });
             }
+    
+            console.log('Database update results:', results);
     
             if (results.affectedRows === 0) {
-                return res.status(400).json({ msg: "Game session not found or already started" });
+                console.error(`Game session ${gameSessionId} not updated.`);
+                return res.status(400).json({ msg: 'Game session not found or already full' });
             }
     
-            res.json({ success: true, msg: "Player joined the game session" });
+            const fetchQuery = `
+                SELECT player_one_id, player_two_id
+                FROM GameSessions
+                WHERE game_session_id = ?
+            `;
+    
+            connection.query(fetchQuery, [gameSessionId], (fetchErr, fetchResults) => {
+                if (fetchErr) {
+                    console.error('Error fetching player details:', fetchErr);
+                    return res.status(500).json({ msg: 'Error fetching session details' });
+                }
+    
+                if (fetchResults.length === 0) {
+                    console.error(`No game session found for ID ${gameSessionId}.`);
+                    return res.status(404).json({ msg: 'Game session not found' });
+                }
+    
+                const { player_one_id, player_two_id } = fetchResults[0];
+                console.log(`Players in session ${gameSessionId}:`, { player_one_id, player_two_id });
+    
+                // Wait for both players to join the WebSocket room
+                setTimeout(() => {
+                    io.in(gameSessionId).allSockets().then((roomMembers) => {
+                        console.log(`Room ${gameSessionId} members:`, [...roomMembers]);
+    
+                        if (roomMembers.size === 2) {
+                            io.to(gameSessionId).emit('lobbyFull', {
+                                gameSessionId,
+                                redirectTo: '/battleshipboard.html',
+                                playerOneId: player_one_id,
+                                playerTwoId: player_two_id,
+                            });
+    
+                            console.log(`Emitted 'lobbyFull' for session ${gameSessionId}.`);
+                        } else {
+                            console.error(`Not all players are in the room for session ${gameSessionId}.`);
+                        }
+                    });
+                }, 500); // Short delay to ensure WebSocket join event processing
+            });
+    
+            res.json({ success: true, msg: 'Player joined the game session' });
         });
     });
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     
     app.post('/end-session', (req, res) => {
         const { gameSessionId } = req.body;
@@ -435,7 +587,7 @@ const services = function(app) {
         }
     
         try {
-            
+            // Generate unattacked cells for the current game session
             const unattackedCellsQuery = `
                 WITH all_grid_points AS (
                     SELECT 
@@ -459,11 +611,11 @@ const services = function(app) {
                 return res.json({ success: false, msg: "No available cells to attack" });
             }
     
-            
+            // Randomly select an unattacked cell
             const randomIndex = Math.floor(Math.random() * results.length);
             const targetCell = results[randomIndex].target;
     
-           
+            // Insert the attack into the database
             const insertAttackQuery = `
                 INSERT INTO Attacks (game_session_id, target_position, result)
                 VALUES (?, ?, 'miss')
@@ -474,7 +626,7 @@ const services = function(app) {
             res.json({
                 success: true,
                 targetCell,
-                result: 'miss', 
+                result: 'miss', // Default result, modify if hit detection is added
             });
         } catch (error) {
             console.error("Error in random attack:", error);
@@ -482,11 +634,86 @@ const services = function(app) {
         }
     });
     
+    app.post('/get-player-two-id', async (req, res) => {
+        const { gameSessionId } = req.body;
     
+        if (!gameSessionId) {
+            return res.status(400).json({ success: false, msg: "Missing gameSessionId" });
+        }
     
+        try {
+            const query = `
+                SELECT player_two_id 
+                FROM GameSessions 
+                WHERE game_session_id = ?
+            `;
+            const [results] = await connection.promise().query(query, [gameSessionId]);
+    
+            if (results.length === 0) {
+                return res.status(404).json({ success: false, msg: "Game session not found" });
+            }
+    
+            const playerTwoId = results[0].player_two_id;
+            res.status(200).json({ success: true, playerId: playerTwoId });
+        } catch (error) {
+            console.error("Error fetching player_two_id:", error);
+            res.status(500).json({ success: false, msg: "Server error" });
+        }
+    });
+    
+    app.post('/get-session-players', async (req, res) => {
+        const { gameSessionId } = req.body;
+    
+        if (!gameSessionId) {
+            return res.status(400).json({ msg: "Missing gameSessionId" });
+        }
+    
+        try {
+            const query = `
+                SELECT player_one_id, player_two_id 
+                FROM GameSessions 
+                WHERE game_session_id = ?
+            `;
+            const [results] = await connection.promise().query(query, [gameSessionId]);
+    
+            if (results.length === 0) {
+                return res.status(404).json({ msg: "Game session not found" });
+            }
+    
+            const { player_one_id, player_two_id } = results[0];
+            res.status(200).json({
+                success: true,
+                playerOneId: player_one_id,
+                playerTwoId: player_two_id,
+            });
+        } catch (error) {
+            console.error("Error fetching session players:", error);
+            res.status(500).json({ msg: "Server error" });
+        }
+    });
     
 
-
+    app.get('/get-latest-session', (req, res) => {
+        const query = `
+            SELECT MAX(game_session_id) AS latestGameSessionId 
+            FROM GameSessions 
+            WHERE session_status = 'waiting'
+        `;
+    
+        connection.query(query, (err, results) => {
+            if (err) {
+                console.error('Error fetching latest game session:', err);
+                return res.status(500).json({ success: false, msg: 'Server error' });
+            }
+    
+            if (results.length === 0 || !results[0].latestGameSessionId) {
+                return res.status(404).json({ success: false, msg: 'No available game sessions' });
+            }
+    
+            res.status(200).json({ success: true, latestGameSessionId: results[0].latestGameSessionId });
+        });
+    });
+    
 
 
 
@@ -496,6 +723,8 @@ const services = function(app) {
 
 
 };
+services.connection = connection;
 
 
 module.exports = services;
+

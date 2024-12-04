@@ -1,4 +1,5 @@
 
+DROP DATABASE IF EXISTS battleship;
 CREATE DATABASE IF NOT EXISTS battleship;
 
 USE battleship;
@@ -28,18 +29,20 @@ CREATE TABLE PlayerShips (
     player_ship_id INT AUTO_INCREMENT PRIMARY KEY,
     player_id INT NOT NULL,
     ship_id INT NOT NULL,
-    position VARCHAR(10) NOT NULL, 
+    position VARCHAR(10) NOT NULL,
     orientation ENUM('horizontal', 'vertical') NOT NULL,
-    FOREIGN KEY (player_id) REFERENCES Players(player_id),
-    FOREIGN KEY (ship_id) REFERENCES Ships(ship_id)
+    UNIQUE KEY unique_player_ship (player_id, ship_id)
 );
+
+
+
 
 
 CREATE TABLE GameSessions (
     game_session_id INT AUTO_INCREMENT PRIMARY KEY,
     player_one_id INT NOT NULL,
     player_two_id INT DEFAULT NULL, 
-    session_status ENUM('ongoing', 'ended') DEFAULT 'waiting',
+    session_status ENUM('waiting', 'ended') DEFAULT 'waiting',
     FOREIGN KEY (player_one_id) REFERENCES Players(player_id),
     FOREIGN KEY (player_two_id) REFERENCES Players(player_id)
 );
@@ -53,6 +56,36 @@ CREATE TABLE Attacks (
     FOREIGN KEY (game_session_id) REFERENCES GameSessions(game_session_id)
 );
 
+SHOW TABLES;
+
 SELECT * FROM Players;
 SELECT * FROM GameSessions;
+SELECT * FROM Ships;
+SELECT * FROM PlayerShips;
+SELECT * FROM attacks;
+
+INSERT INTO Ships (name, size) VALUES
+('Carrier', 4),
+('Battleship', 5),
+('Cruiser', 3),
+('Submarine', 3),
+('Patrol', 2);
+
+#INSERT INTO Players (player_id, username) VALUES (1, 'Player1'), (2, 'Player2');
+
+
+
+#INSERT INTO PlayerShips (player_id, ship_id, position, orientation) VALUES
+#(2, 1, 'B2', 'horizontal'), 
+#(2, 2, 'E4', 'vertical'),
+#(2, 3, 'C7', 'horizontal'),
+#(2, 4, 'H1', 'vertical'),
+#(2, 5, 'I8', 'horizontal'); 
+
+#INSERT INTO PlayerShips (player_id, ship_id, position, orientation) VALUES
+#(4, 1, 'B2', 'horizontal'), 
+#(4, 2, 'E4', 'vertical'),
+#(4, 3, 'C7', 'horizontal'),
+#(4, 4, 'H1', 'vertical'),
+#(4, 5, 'I8', 'horizontal'); 
 
