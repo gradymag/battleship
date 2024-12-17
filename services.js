@@ -249,6 +249,7 @@ const services = function(app,io) {
 
     app.post('/attack', async (req, res) => {
         const { gameSessionId, playerId, targetCell } = req.body;
+        console.log("POST /attack triggered:", req.body);
     
         if (!gameSessionId || !playerId || !targetCell) {
             console.error("Missing parameters:", { gameSessionId, playerId, targetCell });
@@ -258,7 +259,7 @@ const services = function(app,io) {
         try {
             console.log("Attack request received:", { gameSessionId, playerId, targetCell });
     
-            // Fetch players
+            // Fetch players in the session
             const query = `
                 SELECT player_one_id, player_two_id
                 FROM GameSessions
@@ -274,7 +275,7 @@ const services = function(app,io) {
             const { player_one_id, player_two_id } = results[0];
             console.log("Game session players:", { player_one_id, player_two_id });
     
-            // Determine turn
+            // Turn validation
             const attackCountQuery = `
                 SELECT COUNT(*) AS totalAttacks
                 FROM Attacks
@@ -283,17 +284,17 @@ const services = function(app,io) {
             const [attackCountResults] = await connection.promise().query(attackCountQuery, [gameSessionId]);
             const totalAttacks = attackCountResults[0].totalAttacks;
     
-            const isPlayerOneTurn = totalAttacks % 2 === 0; // True if even, false if odd
+            const isPlayerOneTurn = totalAttacks % 2 === 0;
             const expectedPlayerId = isPlayerOneTurn ? player_one_id : player_two_id;
     
-            console.log("Turn details:", { totalAttacks, isPlayerOneTurn, expectedPlayerId });
+            console.log("Turn details:", { totalAttacks, isPlayerOneTurn, expectedPlayerId, playerId });
     
             if (playerId !== expectedPlayerId) {
                 console.error("Invalid turn. Expected:", expectedPlayerId, "but got:", playerId);
                 return res.status(400).json({ msg: "Not your turn" });
             }
     
-            // Calculate hits/misses
+            // Check for hit or miss
             const attackQuery = `
                 SELECT ps.player_id, ps.ship_id, s.size, ps.position, ps.orientation
                 FROM PlayerShips ps
@@ -311,26 +312,73 @@ const services = function(app,io) {
             console.log("Opponent occupied cells:", opponentOccupiedCells);
     
             const isHit = opponentOccupiedCells.includes(targetCell);
+            console.log("Attack result for cell", targetCell, ":", isHit ? "hit" : "miss");
     
-            // Log attack in database
+            // Log attack in the database
             const logAttackQuery = `
                 INSERT INTO Attacks (game_session_id, target_position, result)
                 VALUES (?, ?, ?)
             `;
             await connection.promise().query(logAttackQuery, [gameSessionId, targetCell, isHit ? 'hit' : 'miss']);
-    
             console.log("Attack logged successfully:", { targetCell, result: isHit ? 'hit' : 'miss' });
     
+            // Fetch all hit cells for this game session
+            const hitCellsQuery = `
+                SELECT target_position
+                FROM Attacks
+                WHERE game_session_id = ? AND result = 'hit'
+            `;
+            const [hitCellsResults] = await connection.promise().query(hitCellsQuery, [gameSessionId]);
+            const hitCells = hitCellsResults.map(row => row.target_position);
+    
+            console.log("Hit cells so far:", hitCells);
+    
+            const sunkShips = [];
+            ships.forEach(({ player_id, ship_id, position, orientation, size }) => {
+                const offsets = shipOffsets[size];
+                const shipCells = calculateOccupiedCells(position, orientation, size, offsets);
+    
+                if (shipCells.every(cell => hitCells.includes(cell))) {
+                    console.log(`Ship ${ship_id} for player ${player_id} is sunk.`);
+                    sunkShips.push({ playerId: player_id, shipId: ship_id, cells: shipCells });
+                }
+            });
+    
+            console.log("Sunk ships:", sunkShips);
+    
+            // Notify players about the attack result
+            io.to(gameSessionId).emit('attackResult', {
+                targetCell,
+                result: isHit ? 'hit' : 'miss',
+                attackerId: playerId,
+                opponentId: playerId === player_one_id ? player_two_id : player_one_id,
+                sunkShips, 
+            });
+    
+            // Calculate the next turn
+            const nextTurnPlayerId = isPlayerOneTurn ? player_two_id : player_one_id;
+            console.log("Next turn belongs to Player ID:", nextTurnPlayerId);
+    
+            // Notify all players about the turn update via WebSocket
+            io.to(gameSessionId).emit('currentTurn', { currentTurn: nextTurnPlayerId });
+    
+            // Return the attack result to the attacking player
             return res.json({
                 success: true,
                 result: isHit ? 'Hit' : 'Miss',
                 msg: `Attack on ${targetCell}: ${isHit ? 'Hit' : 'Miss'}!`,
+                sunkShips,
             });
         } catch (error) {
             console.error("Error handling attack:", error);
             return res.status(500).json({ msg: "Error handling attack" });
         }
     });
+    
+    
+    
+    
+    
     
     
     
@@ -626,7 +674,7 @@ const services = function(app,io) {
             res.json({
                 success: true,
                 targetCell,
-                result: 'miss', // Default result, modify if hit detection is added
+                result: 'miss', 
             });
         } catch (error) {
             console.error("Error in random attack:", error);
@@ -715,7 +763,10 @@ const services = function(app,io) {
     });
     
 
-
+    
+    module.exports = services;
+    
+    
 
 
 

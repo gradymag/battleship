@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <script src="/socket.io.js"></script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Battleship Lobby</title>
@@ -50,6 +51,7 @@
       padding: 10px;
       border-radius: 5px;
       border: 1px solid #444;
+      width: 200px;
     }
     .button-section {
       display: flex;
@@ -66,13 +68,14 @@
       font-size: 16px;
       cursor: pointer;
       margin-right: 10px;
+      transition: background-color 0.2s;
     }
-    button:hover {
+    button:hover:not(.disabled) {
       background-color: #45a049;
     }
     button.disabled {
-      background-color: #808080; 
-      cursor: not-allowed;
+      background-color: #808080;
+      opacity: 0.6;
     }
     .lobby-list h3 {
       text-align: center;
@@ -91,12 +94,14 @@
       padding: 5px 10px;
       background-color: #1E90FF;
       font-size: 14px;
+      cursor: pointer;
+      transition: background-color 0.2s;
     }
     .lobby-item button.disabled {
       background-color: #808080;
-      cursor: not-allowed;
+      
     }
-    .lobby-item button:hover {
+    .lobby-item button:hover:not(.disabled) {
       background-color: #1C86EE;
     }
   </style>
@@ -104,44 +109,51 @@
 <body>
 
 <div class="container">
-  <!--Main section for title, username input, and create lobby button -->
   <div class="main-section">
     <h1>Battleship</h1>
 
-    <!--Username input section -->
+    <!-- Username input -->
     <div class="username-section">
       <label for="username">Enter username:</label>
       <input type="text" id="username" placeholder="Username">
     </div>
 
-    <!--Lock Username button -->
+    <!-- Lock Username button -->
     <div class="button-section">
       <button id="lockUsernameBtn">Lock Username</button>
     </div>
 
-    <!--Create lobby button section -->
+    <!-- Create Lobby button -->
     <div class="button-section">
       <button id="createLobbyBtn" class="disabled" disabled>Create Lobby</button>
     </div>
+
+    <!-- Join Lobby button -->
+    <div class="button-section">
+      <button id="joinLobbyBtn" class="disabled" disabled>Join Lobby</button>
+    </div>
   </div>
 
-  <!--Sidebar for lobby list -->
   <div class="lobby-list">
     <h3>Lobbies</h3>
 
-    <!--Placeholder lobby item -->
+    <!-- Example lobbies -->
     <div class="lobby-item">
       <span>Lobby 1</span>
-      <button class="disabled" disabled>Join</button>
+      <button class="disabled" data-session-id="1" disabled>Join</button>
     </div>
     <div class="lobby-item">
       <span>Lobby 2</span>
-      <button class="disabled" disabled>Join</button>
+      <button class="disabled" data-session-id="2" disabled>Join</button>
     </div>
-    
   </div>
 </div>
 
-<script src="lobby.js"></script>
+<!-- Include Socket.IO -->
+<script src="/js/socket.io.min.js"></script>
+
+<!-- Include lobby.js -->
+<script type="module" src="/js/lobby.js"></script>
+
 </body>
 </html>

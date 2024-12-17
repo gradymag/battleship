@@ -1,12 +1,12 @@
 
 
 document.addEventListener('DOMContentLoaded', function () {
-    const socket = io('http://localhost:5000');
+    const socket = io();
     const usernameInput = document.getElementById('username');
     const createLobbyBtn = document.getElementById('createLobbyBtn');
     const lockUsernameBtn = document.getElementById('lockUsernameBtn');
-    const joinLobbyBtn = document.getElementById('joinLobbyBtn'); // Main join button
-    const joinButtons = document.querySelectorAll('.lobby-item button'); // Buttons for individual lobbies
+    const joinLobbyBtn = document.getElementById('joinLobbyBtn'); 
+    const joinButtons = document.querySelectorAll('.lobby-item button'); 
     const playerId = localStorage.getItem('playerId');
     const gameSessionId = localStorage.getItem('gameSessionId');
 
@@ -29,22 +29,21 @@ document.addEventListener('DOMContentLoaded', function () {
         if (username) {
             console.log(`Username locked: ${username}`);
             usernameLocked = true;
-            createLobbyBtn.disabled = false;
-
-            joinButtons.forEach(button => {
-                button.disabled = false;
-                button.classList.remove('disabled');
-            });
-
+    
+            
+            enableButton(createLobbyBtn);
+            enableButton(joinLobbyBtn);
+    
             lockUsernameBtn.disabled = true;
-
+            lockUsernameBtn.classList.add('disabled');
+    
             try {
                 const response = await fetch('/write-record', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ username }),
                 });
-
+    
                 const result = await response.json();
                 if (result.msg === "SUCCESS!") {
                     const idResponse = await fetch('/get-player-id', {
@@ -52,14 +51,14 @@ document.addEventListener('DOMContentLoaded', function () {
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ username }),
                     });
-
+    
                     const idResult = await idResponse.json();
                     if (idResult.playerId) {
                         playerOneId = idResult.playerId;
                         console.log(`Player ID: ${playerOneId}`);
                     }
                 }
-
+    
                 alert(`Username "${username}" locked! You can now create or join a lobby.`);
             } catch (error) {
                 console.error('Error locking username:', error);
@@ -86,7 +85,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 if (result.success && result.gameSessionId) {
                     currentGameSessionId = result.gameSessionId;
                     localStorage.setItem('gameSessionId', currentGameSessionId);
-                    localStorage.setItem('playerId', playerOneId); // Add this line
+                    localStorage.setItem('playerId', playerOneId); 
                     // Join the WebSocket room
                     socket.emit('joinLobby', { gameSessionId: currentGameSessionId, playerId: playerOneId });
                     alert(`Lobby created with Game Session ID: ${result.gameSessionId}!`);
@@ -212,7 +211,17 @@ document.addEventListener('DOMContentLoaded', function () {
     
     
     
+    function enableButton(button) {
+        button.disabled = false; // Remove 'disabled' attribute
+        button.classList.remove('disabled'); // Remove 'disabled' class
+        button.style.cursor = 'pointer'; // Ensure proper cursor
+    }
     
+    function disableButton(button) {
+        button.disabled = true; // Add 'disabled' attribute
+        button.classList.add('disabled'); // Add 'disabled' class
+        button.style.cursor = 'not-allowed'; // Ensure proper cursor
+    }
     
     
 

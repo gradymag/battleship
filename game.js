@@ -26,6 +26,15 @@ const currentGameSessionId = localStorage.getItem('gameSessionId');
 let playerGrid = []; 
 let currentTurn = null;
 let attackButton = null; 
+const opponentGrid = []; 
+let localPlayerId = localStorage.getItem('playerId');
+let sunkShipsCount = 0;
+let alreadySunkShips = new Set()
+let totalHits = 0;
+const MAX_HITS = 17;
+let hitsYouMade = 0; 
+let hitsAgainstYou = 0;
+let gameOver = false;
 
 
 const shipsData = [
@@ -44,6 +53,11 @@ function preload() {
     this.load.image('ship5', 'images/ShipPatrolHull.png');
 }
 
+//const socket = io('http://localhost:5000');
+const socket = io('https://battleship-demo-e5ad5cbce653.herokuapp.com/'); // Use your deployed URL
+
+//let opponentShipsRemaining = shipsData.length; 
+
 function create() {
     const cellSize = 30;
     const opponentCellSize = 20; 
@@ -52,7 +66,7 @@ function create() {
 
     let attackButton = null; // Declare attackButton at the top
     let selectedCell = null; 
-    const opponentGrid = []; 
+    
     const attackedCells = {}; // To track attacked cells
 
     // Spawn boundary for ships
@@ -61,14 +75,18 @@ function create() {
     // Create player's grid
     for (let row = 0; row < gridSize; row++) {
         for (let col = 0; col < gridSize; col++) {
-            const cellX = offsetX + col * cellSize;
-            const cellY = 60 + row * cellSize;
-            const cell = this.add.rectangle(cellX, cellY, cellSize - 2, cellSize - 2, 0x5c5c5c).setOrigin(0);
-            cell.id = String.fromCharCode(65 + row) + (col + 1); 
-            playerGrid.push(cell); 
+            const cellX = offsetX + 500 + col * opponentCellSize;
+            const cellY = 60 + row * opponentCellSize;
+            const cell = this.add.rectangle(cellX, cellY, opponentCellSize - 2, opponentCellSize - 2, 0x5c5c5c).setOrigin(0);
+            cell.id = String.fromCharCode(65 + row) + (col + 1);
             cell.setInteractive();
+            cell.on('pointerdown', () => {
+                if (!shipsLocked) return;
+                selectedCell = highlightOpponentGridCell(opponentGrid, selectedCell, cell);
+            });
         }
     }
+    
 
     this.add.text(offsetX, 20, "Your Board", { fontSize: '20px', color: '#ffffff' });
     createGrid(this, offsetX, 60, gridSize, cellSize, false); 
@@ -165,12 +183,13 @@ function create() {
                         return result.positionFound; 
                     })
                 );
-
+    
                 if (allShipsHavePosition.every(Boolean)) {
                     shipsLocked = true;
                     lockButton.setAlpha(0.5);
                     lockButton.setInteractive(false);
-                    alert("Ships locked! You can now attack.");
+                    socket.emit('shipsLocked', { gameSessionId: currentGameSessionId, playerId: localPlayerId }); // Notify server
+                    alert("Ships locked! Waiting for opponent...");
                 } else {
                     alert("Place all ships on the grid to lock them.");
                 }
@@ -179,6 +198,29 @@ function create() {
             }
         }
     });
+    
+    // Listen for both players being ready
+    socket.on('bothShipsLocked', ({ currentTurn }) => {
+        if (!currentTurn) {
+            console.error("Received null or undefined currentTurn from server!");
+            return;
+        }
+    
+        console.log(`Both ships locked. First turn: Player ${currentTurn}`);
+        currentTurn = currentTurn; 
+    
+        const localPlayerId = localStorage.getItem('playerId');
+        if (currentTurn === localPlayerId) {
+            alert("It's your turn! Make your move.");
+            enableAttack();
+        } else {
+            alert("Waiting for opponent's turn...");
+            disableAttack();
+        }
+    });
+    
+    
+    
 
     // Toggle Orientation Button
     const toggleOrientationButton = this.add.text(offsetX + 310, 470, 'Toggle Orientation', {
@@ -216,64 +258,129 @@ function create() {
     const controlButtons = addControlButtons(this, statusBox, offsetX + 750, 250);
     attackButton = controlButtons.attackButton;
 
-    attackButton.on('pointerdown', () => {
-        const localPlayerId = localStorage.getItem('playerId'); // Get the local player ID
-        console.log("Local Player ID:", localPlayerId); // Debugging
+    attackButton.on('pointerdown', async () => {
+        if (gameOver) {
+            console.log("Game is already over. No further attacks allowed.");
+            alert("The game has ended. Start a new game to play again!");
+            return; 
+        }
+        const localPlayerId = parseInt(localStorage.getItem('playerId'), 10); 
+        console.log("Attack button clicked, shipsLocked:", shipsLocked, "Selected cell:", selectedCell);
+        console.log("Current Turn ID (type):", typeof currentTurn, "Value:", currentTurn);
+        console.log("Local Player ID (type):", typeof localPlayerId, "Value:", localPlayerId);
     
-        console.log("Current Turn ID:", currentTurn); // Debugging
+        // Validate the current turn
         if (currentTurn !== localPlayerId) {
+            console.error("Turn mismatch: Current Turn ID:", currentTurn, "Local Player ID:", localPlayerId);
             alert("It's not your turn!");
             return;
         }
+        console.log("Turn validated: Proceeding with attack.");
     
+        // Validate that a cell is selected and ships are locked
         if (selectedCell && shipsLocked) {
             const cellId = selectedCell.id;
     
+            // Check if the cell has already been attacked
             if (attackedCells[cellId]) {
+                console.log("Cell already attacked:", cellId);
                 alert('You have already attacked this cell!');
                 return;
             }
     
-            socket.emit('playerAttack', {
-                gameSessionId: currentGameSessionId,
-                playerId: localPlayerId,
-                targetCell: cellId,
-            });
+            try {
+                // Send attack data to the server using fetch
+                console.log(`Sending attack: { gameSessionId: ${currentGameSessionId}, playerId: ${localPlayerId}, targetCell: ${cellId} }`);
+                const response = await fetch('/attack', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ gameSessionId: currentGameSessionId, playerId: localPlayerId, targetCell: cellId }),
+                });
     
-            console.log(`Attack sent: Cell ${cellId}`);
+                const result = await response.json();
+                console.log("Attack response:", result);
+    
+                if (result.success) {
+                    console.log(`Attack on ${cellId}: ${result.result}`);
+                    attackedCells[cellId] = result.result.toLowerCase(); // Track the attack
+                    updateGrid(cellId, result.result.toLowerCase());
+                    alert(`Attack result: ${result.result}`);
+                } else {
+                    alert(result.msg);
+                }
+            } catch (error) {
+                console.error("Error sending attack:", error);
+            }
         } else {
+            console.log("Invalid state for attack. shipsLocked:", shipsLocked, "selectedCell:", selectedCell);
             alert('Select a cell to attack first!');
         }
     });
     
-
-    // Socket Event Listeners
+    
+    
+    
+    
+    
+    
+    
+    
+    socket.on('bothShipsLocked', ({ currentTurn: initialTurn }) => {
+        currentTurn = initialTurn; 
+        console.log("Both ships locked! Updated Current Turn:", currentTurn);
+    
+        const localPlayerId = localStorage.getItem('playerId');
+        if (currentTurn === localPlayerId) {
+            alert("It's your turn! Make your move.");
+            enableAttack();
+        } else {
+            alert("Waiting for opponent's move...");
+            disableAttack(); 
+        }
+    });
+    
     socket.on('currentTurn', ({ currentTurn: newTurn }) => {
-        const localPlayerId = localStorage.getItem('playerId');
-        currentTurn = newTurn; // Update the current turn
-    
-        console.log("Updated Current Turn:", currentTurn); // Debugging
-    
-        if (currentTurn === localPlayerId) {
-            alert("It's your turn! Make your move.");
-            enableAttack();
-        } else {
-            alert("Waiting for opponent's move...");
-            disableAttack();
-        }
-    });
-    
+        console.log("Updated Current Turn:", newTurn);
 
-    socket.on('currentTurn', ({ currentTurn }) => {
-        const localPlayerId = localStorage.getItem('playerId');
+        if (gameOver) {
+            console.log("Game over. Ignoring turn updates.");
+            return; 
+        }
+        currentTurn = newTurn;
+        
+        const localPlayerId = parseInt(localStorage.getItem('playerId'), 10);
+    
         if (currentTurn === localPlayerId) {
             alert("It's your turn! Make your move.");
             enableAttack();
+            attackButton.setAlpha(1);
         } else {
-            alert("Waiting for opponent's move...");
+            alert("Waiting for opponent's turn...");
             disableAttack();
+            attackButton.setAlpha(0.5);
         }
     });
+    
+    
+    
+    
+    
+    
+    function updateTurnStatus() {
+        const attackButton = document.getElementById('attackButton');
+        if (!attackButton) {
+            console.error('Attack button not found. Ensure the UI is loaded properly.');
+            return;
+        }
+    
+        if (localPlayer.isTurn) {
+            attackButton.disabled = false;
+        } else {
+            attackButton.disabled = true;
+        }
+    }
+
+
 
     socket.on('notYourTurn', ({ msg }) => {
         alert(msg);
@@ -323,26 +430,27 @@ function createGrid(scene, x, y, size, cellSize, isClickable) {
                 });
             }
             grid.push(cell);
+            playerGrid.push(cell);
+            console.log("Player Grid Initialized:", playerGrid.map(cell => cell.id));
+
         }
     }
 }
 
 function highlightOpponentGridCell(grid, selectedCell, cell) {
-    
-    if (cell.isAttacked) return selectedCell;
+    if (cell.isUpdated) {
+        console.log(`Cell ${cell.id} already updated, skipping highlight.`);
+        return selectedCell; // Skip highlighting if the cell is updated
+    }
 
-    
-    if (selectedCell && !selectedCell.isAttacked) {
+    if (selectedCell && !selectedCell.isUpdated) {
         selectedCell.setFillStyle(0x5c5c5c); 
     }
 
-    
-    if (!cell.isAttacked) {
-        cell.setFillStyle(0x0000ff); 
-    }
-
-    return cell; 
+    cell.setFillStyle(0x0000ff); // Highlight the new selection
+    return cell;
 }
+
 
 
 
@@ -548,6 +656,7 @@ function addControlButtons(scene, statusBox, x, y) {
     })
         .setAlpha(0.5) 
         .setInteractive()
+        .setAlpha(1) 
         .on('pointerdown', () => {
             if (!shipsLocked) {
                 alert("Lock your ships first!");
@@ -557,7 +666,7 @@ function addControlButtons(scene, statusBox, x, y) {
         });
 
     
-    const restartButton = scene.add.text(x, y + 160, 'Restart Game', {
+    /* const restartButton = scene.add.text(x, y + 160, 'Restart Game', {
         ...buttonConfig,
         color: '#ffffff',
     }).setInteractive();
@@ -567,20 +676,21 @@ function addControlButtons(scene, statusBox, x, y) {
         shipsLocked = false;
         statusBox.setText("Game restarted.");
         location.reload();
-    });
+    });*/
 
     
     const endGameButton = scene.add.text(x, y + 200, 'End Game', {
         ...buttonConfig,
         color: '#ffffff',
     }).setInteractive();
-
+    
     endGameButton.on('pointerdown', () => {
         alert("Ending game...");
+        window.location.href = '/battleshiplobby.html';
         statusBox.setText("Game ended.");
     });
 
-    return { attackButton, restartButton, endGameButton };
+    return { attackButton, /*restartButton*/ endGameButton };
 }
 
 
@@ -653,7 +763,6 @@ document.addEventListener('DOMContentLoaded', async function () {
 
 async function fetchPlayerOneId() {
     if (playerOneId) {
-        // Prevent fetching if playerOneId is already set
         console.log('playerOneId already set:', playerOneId);
         return playerOneId;
     }
@@ -822,40 +931,27 @@ const allGridPoints = generateAllGridPoints();
 
 
 
-function updatePlayerGrid(targetCell, result) {
-    console.log(`Player 2 is attacking cell: ${targetCell} on your grid with result: ${result}`);
+
+
+
+
+
+socket.on('opponentAttack', ({ targetCell, result, sunkShips }) => {
+    console.log(`Opponent attacked your grid at ${targetCell} with result: ${result}`);
     
-    // Find the target cell in the player's grid
-    const cell = playerGrid.find(c => c.id === targetCell);
-    console.log("Player Grid IDs:", playerGrid.map(cell => cell.id));
+    // Update the player's grid
+    updatePlayerGrid(targetCell, result);
 
-    if (cell) {
-        console.log(`Found cell on your grid: ${cell.id}`);
-
-        // Update the cell's color based on attack result
-        if (result === 'hit') {
-            console.log(`Marking cell ${cell.id} as hit`);
-            cell.setFillStyle(0xff0000); // Red for hit
-            cell.setDepth(1); // Ensure the cell is on top
-            cell.visible = false; // Force re-render
-            cell.visible = true; 
-            console.log("Cell fill color after update:", cell.fillColor); // Should match the applied color
-
-        } else if (result === 'miss') {
-            console.log(`Marking cell ${cell.id} as miss`);
-            cell.setFillStyle(0xffffff); // White for miss
-            cell.setDepth(1); // Ensure the cell is on top
-            cell.visible = false; // Force re-render
-            cell.visible = true; 
-            console.log("Cell fill color after update:", cell.fillColor); // Should match the applied color
-        }
-
-        // Prevent further interaction with this cell
-        cell.setInteractive(false);
-    } else {
-        console.error(`Cell ${targetCell} not found in player's grid.`);
+    // Handle sunk ships
+    if (sunkShips && sunkShips.length > 0) {
+        sunkShips.forEach(({ cells }) => {
+            cells.forEach(cellId => {
+                updatePlayerGrid(cellId, 'sunk'); 
+            });
+        });
     }
-}
+});
+
 
 
 
@@ -872,7 +968,7 @@ async function fetchSessionDetails(gameSessionId) {
 
         const data = await response.json();
 
-        console.log("Session details fetched:", data); // Add this log
+        console.log("Session details fetched:", data); 
 
         if (response.ok && data.success) {
             return data;
@@ -889,7 +985,7 @@ async function fetchSessionDetails(gameSessionId) {
 
 document.addEventListener('DOMContentLoaded', function () {
     const gameSessionId = localStorage.getItem('gameSessionId');
-    const playerId = localStorage.getItem('playerId'); // Store or retrieve player ID
+    const playerId = localStorage.getItem('playerId'); 
 
     if (!gameSessionId) {
         alert('No game session found. Redirecting to lobby.');
@@ -923,34 +1019,89 @@ document.addEventListener('DOMContentLoaded', function () {
 
 
 
-const socket = io('http://localhost:5000');
-//const socket = io('https://battleship-demo-e5ad5cbce653.herokuapp.com/'); // Use your deployed URL
+
 
 document.addEventListener('DOMContentLoaded', function () {
     const gameSessionId = localStorage.getItem('gameSessionId');
-    const playerId = localStorage.getItem('playerId'); // Store or retrieve player ID
+    const playerId = localStorage.getItem('playerId');
 
     if (!gameSessionId) {
         alert('No game session found. Redirecting to lobby.');
         window.location.href = '/battleshiplobby.html';
     }
 
-    // Emit an event to join the game session room
     socket.emit('joinLobby', { gameSessionId, playerId });
 
-    // Handle attack logic
     const attackCell = (targetCell) => {
         socket.emit('attack', { gameSessionId, targetCell });
     };
 
-    // Listen for attack results
-    socket.on('attackResult', (data) => {
-        const { targetCell, result } = data;
-        console.log(`Attack on ${targetCell}: ${result}`);
+    
 
-        // Update the grid based on attack results
-        updatePlayerGrid(targetCell, result); // Assume this function exists in your game.js
-    });
+  
+
+socket.on('attackResult', ({ targetCell, result, attackerId, opponentId, sunkShips }) => {
+    console.log(`Attack result received:`, { targetCell, result, attackerId, opponentId, sunkShips });
+
+    if (!localPlayerId) {
+        console.error("localPlayerId is not defined. Ensure it is set in localStorage.");
+        return;
+    }
+
+    console.log(`Local Player ID: ${localPlayerId}, Attacker ID: ${attackerId}, Opponent ID: ${opponentId}`);
+
+    // If the opponent attacked you
+    if (opponentId === parseInt(localPlayerId, 10)) {
+        console.log(`Updating local player's grid for attack: ${targetCell}, Result: ${result}`);
+        updatePlayerGrid(targetCell, result);
+
+        // Increment hits against you if the attack was a hit
+        if (result === 'hit') {
+            hitsAgainstYou++;
+            console.log(`Hits against you: ${hitsAgainstYou}`);
+
+            // Check for loss condition
+            if (hitsAgainstYou >= 17) {
+                console.log("All your ships have been hit. You lose!");
+                alert("You lose! All your ships have been hit.");
+                disableAttack();
+                return; 
+            }
+        }
+    }
+
+    // If you attacked the opponent
+    if (attackerId === parseInt(localPlayerId, 10)) {
+        console.log(`Updating opponent's grid for attack: ${targetCell}, Result: ${result}`);
+        updateGrid(targetCell, result, sunkShips);
+
+        // Increment hits you made if the attack was a hit
+        if (result === 'hit') {
+            hitsYouMade++;
+            console.log(`Hits you made: ${hitsYouMade}`);
+
+            // Check for win condition
+            if (hitsYouMade >= 17) {
+                console.log("You hit all opponent ships. You win!");
+                alert("You win! 🎉 All opponent ships have been hit.");
+                disableAttack();
+                return; 
+            }
+        }
+    }
+});
+
+    
+
+    
+    
+    
+    
+    
+    
+    
+    
+    
 
     // Example function to handle attack button click
     document.getElementById('attackBtn').addEventListener('click', function () {
@@ -959,25 +1110,179 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 });
 
+function updatePlayerGrid(targetCell, result, isSunk = false) {
+    console.log(`Updating player's grid. Target: ${targetCell}, Result: ${result}, Is Sunk: ${isSunk}`);
+    const cell = playerGrid.find(c => c.id === targetCell);
+    if (cell) {
+        // Check if cell was locked and re-enable it temporarily
+        if (!cell.input) {
+            cell.setInteractive();
+        }
+
+        if (!cell.isUpdated) {
+            cell.isUpdated = true;
+
+            if (isSunk) {
+                cell.setFillStyle(0x8b0000); 
+                cell.setDepth(12);
+            } else if (result === 'hit') {
+                cell.setFillStyle(0xff0000); 
+                cell.setDepth(10);
+            } else if (result === 'miss') {
+                cell.setFillStyle(0xffffff); 
+                cell.setDepth(10);
+            }
+
+            
+            cell.setInteractive(false);
+        } else {
+            console.log(`Cell ${cell.id} already updated. Skipping.`);
+        }
+    } else {
+        console.error(`Cell ${targetCell} not found in player's grid.`);
+    }
+}
+
+
+
+function updateGrid(targetCell, result, sunkShips = []) {
+    console.log(`Updating opponent grid for cell: ${targetCell} with result: ${result}`);
+
+    const cell = opponentGrid.find(c => c.id === targetCell);
+    if (cell) {
+        if (!cell.isUpdated) {
+            cell.isUpdated = true;
+
+            if (result === 'hit') {
+                cell.setFillStyle(0xff0000); 
+                cell.setDepth(10);
+            } else if (result === 'miss') {
+                cell.setFillStyle(0xffffff); 
+                cell.setDepth(10);
+            }
+            cell.setInteractive(false); 
+        } else {
+            console.log(`Cell ${cell.id} already updated. Skipping.`);
+        }
+    } else {
+        console.error(`Cell ${targetCell} not found in opponent's grid.`);
+    }
+
+    // Handle sunk ships
+    if (sunkShips.length > 0) {
+        console.log(`Processing sunk ships:`, sunkShips);
+        sunkShips.forEach(ship => {
+            ship.cells.forEach(cellId => {
+                const sunkCell = opponentGrid.find(c => c.id === cellId);
+                if (sunkCell) {
+                    sunkCell.setFillStyle(0x8b0000); 
+                    sunkCell.setDepth(12);
+                    sunkCell.isUpdated = true;
+                    sunkCell.setInteractive(false);
+                } else {
+                    console.warn(`Sunk cell ${cellId} not found in opponent's grid.`);
+                }
+            });
+
+            
+            
+        });
+    }
+}
+
+
+
+
+
+
+
+
+
+socket.on('shipSunk', ({ sunkShips }) => {
+    console.log("Sunk ships received:", sunkShips);
+
+    const localPlayerId = parseInt(localStorage.getItem('playerId'), 10);
+
+    sunkShips.forEach(({ playerId, cells }) => {
+        if (playerId !== localPlayerId) {
+            // Opponent's ship is sunk
+            console.log(`Updating opponent's board for sunk ship:`, cells);
+
+            cells.forEach(cellId => {
+                const cell = opponentGrid.find(c => c.id === cellId);
+                if (cell) {
+                    if (!cell.isUpdated) {
+                        cell.isUpdated = true;
+                        cell.setFillStyle(0x8b0000); 
+                        cell.setDepth(12);
+                        cell.setInteractive(false);
+                    }
+                } else {
+                    console.error(`Sunk cell ${cellId} not found in opponent's grid.`);
+                }
+            });
+        } else {
+            console.log(`Sunk ship belongs to local player (Player ID: ${localPlayerId}). No update needed.`);
+        }
+    });
+});
+
+
+
+
+
+
+
 
 
 socket.on('notYourTurn', ({ msg }) => {
-    alert(msg); // Notify the player it's not their turn
+    alert(msg); 
 });
 
 function enableAttack() {
-    // Enable attack button or interaction logic
-    attackButton.setInteractive(true);
-    attackButton.setAlpha(1); // Optional: visually enable
+    if (attackButton) {
+        attackButton.setInteractive(true);
+        attackButton.setAlpha(1); 
+    }
 }
 
 function disableAttack() {
-    // Disable attack button or interaction logic
-    attackButton.setInteractive(false);
-    attackButton.setAlpha(0.5); // Optional: visually disable
+    if (attackButton) {
+        attackButton.setInteractive(false);
+        attackButton.setAlpha(1); 
+    }
+}
+socket.on('opponentWins', () => {
+    console.log("Opponent has sunk all your ships. You lose!");
+    alert("You lose! All your ships have been sunk.");
+    
+    disableAttack();
+});
+
+
+
+function declareVictory() {
+    if (gameOver) return; 
+    gameOver = true; 
+
+    console.log("All opponent ships have been hit. You win!");
+    alert("You win! 🎉 All opponent ships have been hit.");
+
+    disableAttack(); 
+}
+
+function declareDefeat() {
+    if (gameOver) return; s
+    gameOver = true; 
+
+    console.log("All your ships have been hit. You lose!");
+    alert("You lose! All your ships have been hit.");
+
+    disableAttack(); 
 }
 
 
+
 function update() {
-    // Placeholder for game loop
+    
 }

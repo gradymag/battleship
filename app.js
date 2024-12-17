@@ -5,29 +5,30 @@ const bodyParser = require('body-parser');
 const http = require('http');
 const socketIo = require('socket.io');
 const router = require('./router');
-const services = require('./services.js'); // Import services
-const gameTurns = {}; // { gameSessionId: playerId }
-
-
+const services = require('./services.js'); 
 
 const app = express();
 
+// State tracking
+const sessionPlayers = {}; // { gameSessionId: { playerOne: 1, playerTwo: 2 } }
+const gameTurns = {}; // { gameSessionId: currentPlayerId }
+const shipsLocked = {}; // { gameSessionId: { playerOne: boolean, playerTwo: boolean } }
+
+// CORS configuration
+const corsOptions = {
+    origin: 'https://battleship-demo-e5ad5cbce653.herokuapp.com', // Use Heroku app's URL
+    methods: ['GET', 'POST'],
+    credentials: true, 
+};
 
 // Middleware
-app.use(cors());
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: false }));
-const connection = services.connection;
+app.use(cors(corsOptions)); 
+app.use(bodyParser.json()); 
+app.use(bodyParser.urlencoded({ extended: false })); 
+app.use(express.static(path.join(__dirname, '../client/js'))); 
+app.use(router); 
 
-
-// Serve static files from the client folder
-app.use(express.static(path.join(__dirname, '../client/js')));
-
-// Apply routes from the router
-app.use(router);
-
-
-// Middleware to ensure correct MIME type for JavaScript files
+// MIME type for JavaScript files
 app.use((req, res, next) => {
     if (req.url.endsWith('.js')) {
         res.setHeader('Content-Type', 'application/javascript');
@@ -35,56 +36,114 @@ app.use((req, res, next) => {
     next();
 });
 
+// Database connection
+const connection = services.connection;
 
-// Create an HTTP server and attach socket.io
+// Create server
 const server = http.createServer(app);
-const io = socketIo(server); // Attach socket.io to the server
 
-// Track connected users
-const connectedUsers = new Map();
+//http://localhost:5000
+//https://battleship-demo-e5ad5cbce653.herokuapp.com
 
+// Initialize Socket.IO and configure CORS for Heroku
+const io = socketIo(server, {
+    cors: {
+        origin: 'https://battleship-demo-e5ad5cbce653.herokuapp.com', // Us Heroku app's URL
+        methods: ['GET', 'POST'],
+        credentials: true,
+    },
+});
+
+// Socket.IO logic
 io.on('connection', (socket) => {
     console.log(`A user connected: ${socket.id}`);
 
-    // Handle joinLobby event
+    // Player joins a lobby
     socket.on('joinLobby', ({ gameSessionId, playerId }) => {
         if (!gameSessionId || !playerId) {
             console.error('Invalid joinLobby request:', { gameSessionId, playerId });
             return;
         }
-
+    
         console.log(`Player ${playerId} joining lobby ${gameSessionId}`);
         socket.join(gameSessionId);
-
-        // Initialize turn for the game session if not already set
-        if (!gameTurns[gameSessionId]) {
-            gameTurns[gameSessionId] = playerId; // First player to join gets the first turn
-            console.log(`Game ${gameSessionId}: Turn initialized for Player ${playerId}`);
+    
+        if (!shipsLocked[gameSessionId]) {
+            shipsLocked[gameSessionId] = { playerOne: false, playerTwo: false };
         }
-
-        // Notify players of the current turn
-        io.to(gameSessionId).emit('currentTurn', {
-            currentTurn: gameTurns[gameSessionId],
-        });
+    
+        if (!sessionPlayers[gameSessionId]) {
+            sessionPlayers[gameSessionId] = { playerOne: playerId, playerTwo: null };
+            console.log(`Session initialized: ${JSON.stringify(sessionPlayers[gameSessionId])}`);
+        } else if (!sessionPlayers[gameSessionId].playerTwo) {
+            sessionPlayers[gameSessionId].playerTwo = playerId;
+            console.log(`Player Two joined. Updated session: ${JSON.stringify(sessionPlayers[gameSessionId])}`);
+        }
     });
+    
 
-    // Handle playerAttack event
-    socket.on('playerAttack', ({ gameSessionId, playerId, targetCell }) => {
-        if (!gameSessionId || !playerId || !targetCell) {
-            console.error('Invalid attack event:', { gameSessionId, playerId, targetCell });
+    // Player locks ships
+    socket.on('shipsLocked', ({ gameSessionId, playerId }) => {
+        const players = sessionPlayers[gameSessionId];
+    
+        console.log(`Players in session ${gameSessionId}:`, players);
+        console.log(`Initial shipsLocked state for ${gameSessionId}:`, shipsLocked[gameSessionId]);
+    
+        // Check if session exists and both players are assigned
+        if (!players || !players.playerOne || !players.playerTwo) {
+            console.error(`Both players must join the session before locking ships. Session: ${JSON.stringify(players)}`);
             return;
         }
+    
+        // Explicitly parse playerId and compare
+        const parsedPlayerId = parseInt(playerId, 10); 
+        if (parsedPlayerId === players.playerOne) {
+            shipsLocked[gameSessionId].playerOne = true;
+            console.log(`Player ${parsedPlayerId} (Player One) locked ships.`);
+        } else if (parsedPlayerId === players.playerTwo) {
+            shipsLocked[gameSessionId].playerTwo = true;
+            console.log(`Player ${parsedPlayerId} (Player Two) locked ships.`);
+        } else {
+            console.error(
+                `Invalid player ID ${playerId} for session ${gameSessionId}. Session players: ${JSON.stringify(players)}`
+            );
+            return;
+        }
+    
+        console.log(`Updated shipsLocked state for ${gameSessionId}:`, shipsLocked[gameSessionId]);
+    
+        // Check if both players have locked their ships
+        if (shipsLocked[gameSessionId].playerOne && shipsLocked[gameSessionId].playerTwo) {
+            // Determine the first turn based on the lower player ID
+            gameTurns[gameSessionId] =
+                players.playerOne < players.playerTwo ? players.playerOne : players.playerTwo;
+    
+            console.log(`Both players locked ships for session ${gameSessionId}. First turn: Player ${gameTurns[gameSessionId]}`);
+    
+            // Notify all players in the session that both ships are locked
+            io.to(gameSessionId).emit('bothShipsLocked', {
+                currentTurn: gameTurns[gameSessionId],
+            });
+        }
+    });
+    
+    
+    
+    
+    
+    
 
-        // Validate the turn
+    // Player attacks
+    socket.on('playerAttack', ({ gameSessionId, playerId, targetCell }) => {
+        console.log(`Player ${playerId} attacked cell ${targetCell} in session ${gameSessionId}`);
+    
+        // Validate turn
         if (gameTurns[gameSessionId] !== playerId) {
-            console.error(`Not Player ${playerId}'s turn in game session ${gameSessionId}`);
             socket.emit('notYourTurn', { msg: "It's not your turn!" });
             return;
         }
-
-        console.log(`Player ${playerId} attacked cell ${targetCell} in game session ${gameSessionId}`);
-
-        // Query the database for the attack result
+    
+        // Validate attack
         const query = `
             SELECT ps.ship_id 
             FROM PlayerShips ps
@@ -93,77 +152,45 @@ io.on('connection', (socket) => {
             AND ps.player_id != ? 
             AND ps.position = ?
         `;
-
+    
         connection.query(query, [gameSessionId, playerId, targetCell], (err, results) => {
             if (err) {
-                console.error('Error validating attack:', err);
+                console.error('Error processing attack:', err);
+                socket.emit('attackError', { msg: "An error occurred while processing your attack." });
                 return;
             }
-
+    
             const result = results.length > 0 ? 'hit' : 'miss';
-            console.log(`Attack result: ${targetCell} - ${result}`);
-
-            // Broadcast the attack result to both players
+    
+            // Broadcast attack result
             io.to(gameSessionId).emit('attackResult', {
                 targetCell,
                 result,
                 attackerId: playerId,
             });
-
-            // Switch turns
-            connection.query(
-                `SELECT player_one_id, player_two_id FROM GameSessions WHERE game_session_id = ?`,
-                [gameSessionId],
-                (err, players) => {
-                    if (err) {
-                        console.error('Error fetching player IDs for turn switch:', err);
-                        return;
-                    }
-
-                    if (players.length > 0) {
-                        const { player_one_id, player_two_id } = players[0];
-                        gameTurns[gameSessionId] =
-                            gameTurns[gameSessionId] === player_one_id ? player_two_id : player_one_id;
-                        console.log(`Game ${gameSessionId}: Turn switched to Player ${gameTurns[gameSessionId]}`);
-
-                        io.to(gameSessionId).emit('currentTurn', {
-                            currentTurn: gameTurns[gameSessionId],
-                        });
-                    }
-                }
-            );
+    
+            // Update turn
+            const players = sessionPlayers[gameSessionId];
+            gameTurns[gameSessionId] =
+                gameTurns[gameSessionId] === players.playerOne
+                    ? players.playerTwo
+                    : players.playerOne;
+    
+            console.log(`Game ${gameSessionId}: Turn switched to Player ${gameTurns[gameSessionId]}`);
+            io.to(gameSessionId).emit('currentTurn', { currentTurn: gameTurns[gameSessionId] });
         });
     });
+    
+    
+    
+    
+    
 
-    // Handle disconnections
+    // Handle disconnection
     socket.on('disconnect', () => {
         console.log(`A user disconnected: ${socket.id}`);
     });
 });
-
-/*socket.on('disconnect', () => {
-    console.log(`A user disconnected: ${socket.id}`);
-
-    // Optional cleanup
-    for (const [gameSessionId, currentTurn] of Object.entries(gameTurns)) {
-        const socketsInRoom = io.sockets.adapter.rooms.get(gameSessionId) || new Set();
-        if (socketsInRoom.size < 2) {
-            console.log(`Cleaning up game session ${gameSessionId} due to disconnection`);
-            delete gameTurns[gameSessionId];
-        }
-    }
-});
-*/
-
-
-
-
-
-
-
-
-
-
 
 // Attach `io` and `app` to `services.js`
 services(app, io);
