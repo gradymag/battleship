@@ -33,7 +33,11 @@ document.addEventListener('DOMContentLoaded', function () {
             
             enableButton(createLobbyBtn);
             enableButton(joinLobbyBtn);
-    
+            joinButtons.forEach(button => {
+                enableButton(button);
+            });
+            
+
             lockUsernameBtn.disabled = true;
             lockUsernameBtn.classList.add('disabled');
     

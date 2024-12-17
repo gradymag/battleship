@@ -287,6 +287,11 @@ const services = function(app,io) {
             const isPlayerOneTurn = totalAttacks % 2 === 0;
             const expectedPlayerId = isPlayerOneTurn ? player_one_id : player_two_id;
     
+            if (!player_one_id || !player_two_id) {
+                console.error("Error: Missing player IDs in game session:", { player_one_id, player_two_id });
+                return res.status(500).json({ msg: "Server error: Missing player IDs" });
+            }
+    
             console.log("Turn details:", { totalAttacks, isPlayerOneTurn, expectedPlayerId, playerId });
     
             if (playerId !== expectedPlayerId) {
@@ -354,13 +359,27 @@ const services = function(app,io) {
                 opponentId: playerId === player_one_id ? player_two_id : player_one_id,
                 sunkShips, 
             });
+            
+            // Calculate the next turn with fix
+            let nextTurnPlayerId = null;
     
-            // Calculate the next turn
-            const nextTurnPlayerId = isPlayerOneTurn ? player_two_id : player_one_id;
+            if (player_one_id && player_two_id) {
+                nextTurnPlayerId = isPlayerOneTurn ? player_two_id : player_one_id;
+            } else {
+                console.error("Error: Missing player IDs in game session:", { player_one_id, player_two_id });
+                return res.status(500).json({ msg: "Server error: Missing player IDs for turn calculation" });
+            }
+    
             console.log("Next turn belongs to Player ID:", nextTurnPlayerId);
     
             // Notify all players about the turn update via WebSocket
-            io.to(gameSessionId).emit('currentTurn', { currentTurn: nextTurnPlayerId });
+            if (nextTurnPlayerId) {
+                io.to(gameSessionId).emit('currentTurn', { currentTurn: nextTurnPlayerId });
+                console.log("Emitted next turn to Player ID:", nextTurnPlayerId);
+            } else {
+                console.error("Error: nextTurnPlayerId is invalid. Turn not emitted.");
+                return res.status(500).json({ msg: "Server error: Could not determine the next turn player." });
+            }
     
             // Return the attack result to the attacking player
             return res.json({
@@ -374,6 +393,7 @@ const services = function(app,io) {
             return res.status(500).json({ msg: "Error handling attack" });
         }
     });
+    
     
     
     
